@@ -1,0 +1,344 @@
+---
+title: "Paresthesias analysis"
+author: "Peter M Grund"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Set-up
+
+We begin by setting global options for R Markdown chunks and then loads necessary libraries: `tidyverse` for data manipulation and visualization and `stringdist` for string distance calculations (not currently using).
+
+The dataset `data.csv`, downloaded directly from REDCap, is then loaded. The dataset is filtered to remove rows where Repeat Instrument is NA, which indicate an empty row.
+
+```{r setup, include=FALSE}
+
+# Dependencies and settings
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(shiny)
+library(rsconnect)
+library(grid)
+
+# Load the data
+data <- read_csv("data.csv") %>% 
+  filter(!is.na(`Repeat Instrument`))
+
+```
+
+Next, I rename several columns in the dataset for clarity and ease of use. The `settings` column is converted to lowercase to standardize the data. Certain columns `(Complete?`, `Repeat Instrument`, `Survey Identifier`) are removed from the dataset as they are not needed for this analysis.
+
+```{r clean}
+
+# Rename columns
+data_cleaned <- data %>%
+  rename(study_ID = `Study ID`, visit = `Event Name`, order_type = `Repeat Instance`, config = `Configuration number`, settings = `Full settings`, mA = `Amplitude (mA)`, para_type = `Type of paresthesia?`, para_seconds = `Length of paresthesia (sec)`, notes = `Notes`) %>%
+  
+
+# Lowercase settings
+  mutate(settings = tolower(settings)) %>%
+  
+# Drop unnecessary columns
+  select(-(c(`Complete?`, `Repeat Instrument`, `Survey Identifier`)))
+
+```
+
+# Functions
+
+**Body parts parsing punction** (`extract_body_parts`): This function is designed to parse the notes column to identify and extract body parts that experienced paresthesia. It uses a predefined list of keywords for different body parts and returns a comma-separated string of found body parts. The body parts are meant to align with the body's dermatomes.
+
+```{r extract body parts function}
+
+extract_body_parts <- function(notes) {
+  if (is.na(notes)) {
+    return(NA)
+  }
+
+  # Vector of body part segmentation
+  body_parts <- list(
+    arm = c("arm", "Arm", "shoulder", "upper extremity"),
+    forearm_and_elbow = c("elbow", "forearm"),
+    leg = c("leg", "Leg", "lower extremity", "Lower extremity"),
+    head = c("head", "Head", "forehead", "Forehead", "ear", "Ear", "neck"),
+    hand = c("hand", "wrist"),
+    foot_or_ankle = c("foot", "ankle"),
+    fingers = c("finger", "fingers", "thumb", "pinkie", "Fingertip"),
+    toe = c("toe", "toes"),
+    tongue = c("tongue"),
+    face = c("face", "Face", "facial", "cheek", "nose", "chin", "teeth", "jaw", "lip", "lips", "mouth"),
+    chest_entire_body = c("chest", "entire", "side of body", "side of the body"),
+    back = c("back"),
+    shoulder = c("shoulder")
+  )
+  
+  # Find matches and return as comma-separated string
+  found_parts <- c()
+  for (part in names(body_parts)) {
+    if (any(sapply(body_parts[[part]], function(word) str_detect(notes, word)))) {
+      found_parts <- c(found_parts, part)
+    }
+  }
+
+  return(paste(found_parts, collapse = ", "))
+}
+```
+
+**Laterality identification function (`identify_laterality`)**: This function determines the laterality (side of the body affected by the paresthesia), based on the study ID and notes. It uses text matching to identify if the reported sensations are ipsilateral or contralateral to the side indicated by the study ID, which is the side of the brain being stimulated.
+
+```{r laterality function}
+
+# Function to identify laterality
+identify_laterality <- function(study_ID, notes) {
+  # Extract last character of study ID which indicates stimulation side
+  study_ID_side <- toupper(substr(study_ID, nchar(study_ID), nchar(study_ID)))
+  
+  # Check for mention of left or right in the notes
+  if (!is.na(notes)) {
+    notes_lower <- tolower(notes)
+    if ((grepl("\\br\\b|\\bright\\b", notes_lower) && study_ID_side == "R") ||
+        (grepl("\\bl\\b|\\bleft\\b", notes_lower) && study_ID_side == "L")) {
+      return("ipsilateral")
+    } else if (grepl("r |right", notes_lower) && study_ID_side == "L") {
+      return("contralateral")
+    } else if (grepl("l |left", notes_lower) && study_ID_side == "R") {
+      return("contralateral")
+    } else {
+      return("")  # If notes don't contain any laterality information
+    }
+  } else {
+    return("")  # If notes column is empty
+  }
+}
+```
+
+**Severity extraction function (`extract_severity`)**: This function extracts the severity of symptoms (notated as a fraction out of 10) from the **`notes`** column.
+
+```{r extract severity}
+
+extract_severity <- function(notes) {
+  # Check if the notes column contains the pattern
+  if (!is.na(notes) && grepl("\\b[0-9]/10\\b|10/10", notes)) {
+    # Extract the number before "/10"
+    matches <- regmatches(notes, regexpr("\\b[0-9]/10\\b|10/10", notes))
+    intensity <- sub("/10", "", matches)
+    return(intensity)
+  } else {
+    return("")  # No match found or notes is NA
+  }
+}
+```
+
+**Settings parsing function (`parse_settings`)**: The function parses the **`settings`** column to extract the **`contact_lead`**, determine if the stimulation is unipolar or bipolar, and extract additional parameters.
+
+-   This function still needs a lot of work. I am not clear on what data is contained in the `settings` column besides the contact lead. My understanding is that a slash (/) between two different contacts indicates it is a bipolar setting?
+
+```{r parse settings function}
+
+parse_settings <- function(df) {
+  # Extract the contact lead including any + or - (before the first / or end of string)
+  df$contact_lead <- sub("(/.*|$)", "", df$settings)
+  
+  # Determine if the stimulation is unipolar or bipolar
+  df$stimulation_type <- ifelse(grepl("/", df$settings), "bipolar", "unipolar")
+  
+  # Optionally, extract additional parameters (you can modify this part based on your specific requirements)
+  # Example: Extracting everything after the contact lead and before any additional parameters
+  df$additional_params <- sub("^[^-/]+[-/]", "", df$settings)
+  
+  return(df)
+}
+
+```
+
+## Executing functions
+
+I now apply the previously defined functions to the cleaned data, adding new columns for body parts, laterality, and severity based on the **`notes`** column.
+
+```{r execute functions}
+
+# Add body_part and laterality columns to cleaned data
+data_cleaned$body_part <- sapply(data_cleaned$notes, extract_body_parts)
+data_cleaned$laterality <- mapply(identify_laterality, data_cleaned$study_ID, data_cleaned$notes)
+data_cleaned$severity <- sapply(data_cleaned$notes, extract_severity)
+
+```
+
+# Data cleaning
+
+The **`mA`** (amplitude) and **`severity`** columns are converted to numeric types, handling potential NA values.
+
+```{r convert to correct data type}
+# Use as.numeric() and handle potential NA values
+data_cleaned$mA <- as.numeric(as.character(data_cleaned$mA))
+data_cleaned$severity <- as.numeric(as.character(data_cleaned$severity))
+
+# Check for any NAs introduced by conversion
+sum(is.na(data_cleaned$mA))
+sum(is.na(data_cleaned$severity))
+
+```
+
+A table of different settings and their frequencies is created. A series of replacements in the **`settings`** column is performed to standardize and clean the data. For example, `10b- 11b` -> `10b-/11b` , `-8` -> `8-`, etc.
+
+-   Some replacements will require manual checking. I tried to guess which settings were typos of actual settings (e.g., `2a` I interpreted as `2a-` because there was only `r sum(data_cleaned$settings == "2a", na.rm = TRUE)` instance(s) of `2a` and `r sum(data_cleaned$settings == "2a-", na.rm = TRUE)` instance(s) of `2a-`). However, I was likely not 100 percent accurate. I would recommend that Rebecca look this section over carefully to check my work.
+
+```{r mapping identical settings}
+settings_table <- as.data.frame(table(data_cleaned$settings))
+names(settings_table) <- c("Setting", "Frequency")
+
+settings_replacement <- c(
+  "-8" = "8-",
+  "\\?" = NA,  # Escaped ?
+  "@a" = NA,
+  "1\\.0" = NA,  # Escaped .
+  "1- c\\+" = "1-/c+",  # Escaped +
+  "10abc " = "10abc-",
+  "10b- 11b " = "10b-/11b+",
+  "10b- 11b\\+" = "10b-/11b+",  # Escaped +
+  "10c " = "10c-",
+  "11b " = "11b-",
+  "2c-c+" = "2c-/c+",
+  "2/3/4\\(-\\)" = "2/3/4-",  # Escaped ()-
+  "2a " = "2a-",
+  "2a- 2c-" = "2a-/2c-",
+  "2a- 3a-" = "2a-/3a-",
+  "2a- c\\+" = "2a-/c+",  # Escaped +
+  "2c- c\\+" = "2c-/c+",  # Escaped +
+  "2c-3c\\+" = "2c-/3c+",  # Escaped +
+  "c\\+ 10a-" = "c+/10a-",  # Escaped +
+  "c\\+ 11c-" = "c+/11c-",  # Escaped +
+  "c\\+ 12-" = "c+/12-",  # Escaped +
+  "c\\+ 9-" = "c+/9-",  # Escaped +
+  "2a-3c\\+" = "2a-/3c+",  # Escaped +
+  "2b " = "2b-",
+  "2b- 3b\\+" = "2b-/3b+",  # Escaped +
+  "2b- c\\+" = "2b-/c+",  # Escaped +
+  "2c- 3c\\+" = "2c-/3c+",  # Escaped +
+  "3b- c\\+" = "3b-/c+ ",  # Escaped +
+  "3c- c\\+" = "3c-/c+",  # Escaped +
+  "4\\.0" = NA,  # Escaped .
+  "4\\.5" = NA,  # Escaped .
+  "4\\(-\\)/7\\(\\+\\)" = "4-/7+",  # Escaped ()+-
+  "4\\(\\+\\)/7\\(-\\)" = "4+/7-",  # Escaped ()+-
+  "4\\(\\+\\)7\\(-\\)" = "4+/7-",  # Escaped ()+-
+  "4/7\\(-\\) \\[80/20%\\]" = "4+/7-",  # Escaped ()- and []
+  "4\\+ 7-" = "4+/7-",  # Escaped +
+  "5\\(\\+\\)/7\\(-\\)" = "5+/7-",  # Escaped ()+-
+  "5\\+ 7-" = "5+/7-",  # Escaped +
+  "5/6/7\\(-\\)" = "5/6/7-",  # Escaped ()-
+  "c\\+ 10a " = "c+/10a-",  # Escaped +
+  "c\\+ 11c- " = "c+/11c-",  # Escaped +
+  "c\\+ 12- " = "c+/12-",  # Escaped +
+  "c\\+ 9- " = "c+/9-"  # Escaped +
+)
+
+settings_cleaned <- data_cleaned %>%
+  mutate(settings = str_replace_all(settings, settings_replacement)) %>%
+  parse_settings()
+
+```
+# Paresthesia and dermatome distribution analysis
+
+Next, I generate descriptive statistics for **`mA`**, **`severity`**, and **`settings`** columns.
+
+Frequency counts mA values are also calculated and displayed. The extent of amplitude variability across the cohort (all subjects, all visits) can be seen in the histogram.
+
+```{r}
+
+# Descriptive statistics for numerical variables
+settings_cleaned %>% 
+  select(mA, severity, settings) %>% 
+  summary()
+
+# Frequency counts for mA
+mA_count <- settings_cleaned %>%
+  group_by(mA) %>%
+  summarise(count = n()) %>%
+  print(n = 43)
+
+# Histogram of mA
+hist(settings_cleaned$mA,
+        main = "mA where paresthesias were reported")
+```
+
+Finally, the frequency of different body parts that experienced paresthesia is displayed.
+
+```{r}
+# Frequency counts for body parts
+body_part_count <- settings_cleaned %>%
+  separate_rows(body_part, sep = ",\\s*") %>%
+  group_by(body_part) %>%
+  summarise(count = n()) %>%
+  print()
+```
+
+Next, I identify cases where both facial and upper extremity (UE) dermatomes are affected in the same subject. The dataset is first filtered for only unipolar settings (per Rebecca's recommendation). Next, it further filters for instances where the `body_part` column contains both facial and upper extremity (UE) dermatomes. Finally, it prints the facial and UE combinations reported at least five times, along with the mean/SD amplitude and how many subjects reported experiencing this combination of paresthesias.
+
+```{r}
+face_UE_unipolar_data <- settings_cleaned %>%
+  filter(stimulation_type == "unipolar") %>%
+  filter(grepl("face|tongue", body_part) & grepl("arm|fingers|forearm_and_elbow", body_part)) %>%
+  select(study_ID, visit, body_part, settings, mA) 
+
+summary_face_UE_unipolar_data <- face_UE_unipolar_data %>%
+  group_by(body_part) %>%
+  summarise(count = n(),
+            mean_mA = mean(mA),
+            sd_mA = sd(mA),
+            unique_study_IDs = n_distinct(study_ID)) %>%
+  filter(count >= 5) %>%
+  print()
+
+```
+
+```{r}
+ui <- fluidPage(
+  selectInput("subjectInput", "Choose a Subject:", choices = unique(data_cleaned$study_ID)),
+  selectInput("visitInput", "Choose a Visit:", choices = unique(data_cleaned$visit)), # Choices set in server
+  plotOutput("subjectPlot")
+)
+
+server <- function(input, output) {
+  selected_data <- reactive({
+    data_cleaned %>%
+      filter(study_ID == input$subjectInput, visit == input$visitInput) %>%
+      arrange(as.numeric(order_type)) %>%
+      mutate(combined_settings = case_when(
+        settings %in% c("A", "B") ~ "A_B",
+        settings %in% c("C", "D") ~ "C_D",
+        TRUE ~ as.character(settings)
+      ))
+  })
+
+  output$subjectPlot <- renderPlot({
+    plot_data <- selected_data()
+    
+    # Create a complete dataset with all combinations of subjects, visits, and settings
+    complete_data <- expand.grid(study_ID = unique(data_cleaned$study_ID),
+                                 visit = unique(data_cleaned$visit),
+                                 settings = unique(data_cleaned$settings))
+
+    # Left join the complete dataset with the selected data
+    plot_data <- left_join(complete_data, plot_data, by = c("study_ID", "visit", "settings"))
+
+    ggplot(plot_data, aes(x = settings, y = mA, color = severity, shape = para_type)) +
+      geom_point(size = 4, stroke = 0) +
+      geom_text(aes(label = severity), size = 3, nudge_x = 0.2, nudge_y = 0.0, check_overlap = TRUE) +
+      scale_color_gradient(low = "#D2EBE2", high = "#061F16", limits = c(0, 10)) +
+      scale_y_continuous(limits = c(0, 5)) +  # Set y-axis limits
+      labs(title = paste("Paresthesia thresholds for subject", input$subjectInput, "during", input$visitInput),
+           x = "Settings (Ordered by type)",
+           y = "mA (amplitude)",
+           color = "Severity",
+           shape = "Paresthesia type") +
+      annotate("text", x = Inf, y = Inf, label = "Note: Gray points without values indicate missing severity data", hjust = 1.1, vjust = 1.1, size = 3) +
+      theme_minimal() +
+      scale_shape_manual(values = c("Transient" = 16, "Persistent" = 17))  
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
