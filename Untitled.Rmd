@@ -1,0 +1,90 @@
+---
+title: "questionnaires"
+author: "Peter M Grund"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+# Dependencies and settings
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(shiny)
+library(rsconnect)
+library(grid)
+
+# Load the data
+adl_data <- read_csv("tetras_adl.csv")
+quest <- read_csv("quest.csv")
+
+```
+
+```{r}
+quest$quest_timestamp <- as.POSIXct(quest$quest_timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+quest$standardized_pid <- sub("L$|R$", "", quest$meds_enctr_pid)
+
+
+# Sort by timestamp to keep the most recent record on top
+quest_r <- quest %>%
+  arrange(standardized_pid, redcap_event_name, desc(quest_timestamp)) %>%
+    mutate(across(quest_communicate:quest_relationships, as.numeric))
+
+quest_ra <- quest_r %>%
+  group_by(standardized_pid, redcap_event_name) %>%
+  mutate(redcap_event_name = case_when(
+    redcap_event_name == "baseline_arm_1" ~ "1",
+    redcap_event_name == "6_months_arm_1" ~ "2",
+    redcap_event_name == "12_months_arm_1" ~ "3",
+    redcap_event_name == "18_months_arm_1" ~ "4",
+    redcap_event_name == "24_months_arm_1" ~ "5",
+    TRUE ~ redcap_event_name)) %>%
+  #  quest_total = rowSums(select(., quest_communicate, quest_relationships, everything()), na.rm = TRUE)) %>%
+  slice(1) %>%
+  ungroup()
+
+# Remove the L/R from the original meds_enctr_pid
+quest_ra$quest_ra <- quest_ra$standardized_pid
+quest_ra$quest_ra <- NULL
+
+quest_ra <- quest_ra %>%
+  mutate(quest_total = rowSums(across(quest_communicate:quest_relationships)))
+
+
+
+```
+
+
+## R Markdown
+
+```{r}
+
+# TETRAS-ADL total score by subject
+tetras_adl_lon <- ggplot(adl_data, aes(x = core_visitcode, y = tetrasadl_total, group = meds_enctr_pid, color = meds_enctr_pid)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "TETRAS-ADL total score by subject",
+       x = "Visit",
+       y = "Score") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) 
+
+tetras_adl_lon
+```
+
+```{r}
+
+# QUEST hours by subject
+quest_hrs <- ggplot(quest_ra, aes(x = redcap_event_name, y = quest_total, group = standardized_pid, color = standardized_pid)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "QUEST total by subject",
+       x = "Visit",
+       y = "Score") +
+  theme_minimal() +
+  theme(legend.title = element_blank()) 
+
+quest_hrs
+```
+
