@@ -149,15 +149,19 @@ extract_severity <- function(notes) {
 ```{r parse settings function}
 
 parse_settings <- function(df) {
-  # Extract the contact lead including any + or - (before the first / or end of string)
-  df$contact_lead <- sub("(/.*|$)", "", df$settings)
+  # Keep the numerical patterns like '2/3/4' intact
+  df$contact_lead <- sub("((?<!\\d)/(?!\\d)|$)", "", df$settings, perl = TRUE)
   
   # Determine if the stimulation is unipolar or bipolar
-  df$stimulation_type <- ifelse(grepl("/", df$settings), "bipolar", "unipolar")
+  df$stimulation_type <- ifelse(
+    grepl("c\\+/|/c\\+", df$settings), "unipolar",
+    ifelse(grepl("-", df$settings) & grepl("\\+", df$settings), "bipolar", "unipolar")
+  )
   
-  # Optionally, extract additional parameters (you can modify this part based on your specific requirements)
-  # Example: Extracting everything after the contact lead and before any additional parameters
-  df$additional_params <- sub("^[^-/]+[-/]", "", df$settings)
+  # Remove case+ (c+/) markings
+  df$settings <- sub("c\\+/|/c\\+([[:space:]]|$)", "", df$settings)
+  df$settings <- gsub("\\+\\+", "+", df$settings)
+  df$settings <- ifelse(!grepl("/", df$settings), sub("-([[:space:]]|$)", "", df$settings), df$settings)
   
   return(df)
 }
