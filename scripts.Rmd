@@ -26,6 +26,15 @@ library(grid)
 data <- read_csv("data.csv") %>% 
   filter(!is.na(`Repeat Instrument`))
 
+# Load DBS device data
+dbs_data <- read_csv("dbs.csv") %>%
+  select(c("Study ID", "1. Which device does this patient have?")) %>%
+  rename(study_ID = `Study ID`, device = `1. Which device does this patient have?`) %>%
+  mutate(device = case_when(
+    device == "Boston Scientific" ~ "BS",
+    device == "Abbott" ~ "AB"
+  ))
+
 ```
 
 Next, I rename several columns in the dataset for clarity and ease of use. The `settings` column is converted to lowercase to standardize the data. Certain columns `(Complete?`, `Repeat Instrument`, `Survey Identifier`) are removed from the dataset as they are not needed. Device type (Boston or Abbott) is added.
@@ -35,7 +44,7 @@ Next, I rename several columns in the dataset for clarity and ease of use. The `
 # Rename columns
 data_cleaned <- data %>%
   rename(study_ID = `Study ID`, visit = `Event Name`, order_type = `Repeat Instance`, config = `Configuration number`, settings = `Full settings`, mA = `Amplitude (mA)`, para_type = `Type of paresthesia?`, para_seconds = `Length of paresthesia (sec)`, notes = `Notes`) %>%
-  
+  left_join(dbs_data, by = "study_ID") %>%
 
 # Lowercase settings
   mutate(settings = tolower(settings)) %>%
