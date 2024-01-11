@@ -104,21 +104,24 @@ identify_laterality <- function(study_ID, notes) {
   study_ID_side <- toupper(substr(study_ID, nchar(study_ID), nchar(study_ID)))
   
   # Check for mention of left or right in the notes
-  if (!is.na(notes)) {
+  laterality <- if (!is.na(notes)) {
     notes_lower <- tolower(notes)
     if ((grepl("\\br\\b|\\bright\\b", notes_lower) && study_ID_side == "R") ||
         (grepl("\\bl\\b|\\bleft\\b", notes_lower) && study_ID_side == "L")) {
-      return("ipsilateral")
+      "ipsilateral"
     } else if (grepl("r |right", notes_lower) && study_ID_side == "L") {
-      return("contralateral")
+      "contralateral"
     } else if (grepl("l |left", notes_lower) && study_ID_side == "R") {
-      return("contralateral")
+      "contralateral"
     } else {
-      return("")  # If notes don't contain any laterality information
+      ""  # If notes don't contain any laterality information
     }
   } else {
-    return("")  # If notes column is empty
+    ""  # If column is empty
   }
+  
+  # Return a list containing both the laterality and study_ID_side
+  list(laterality = laterality, brain_side = study_ID_side)
 }
 ```
 
@@ -167,9 +170,11 @@ I now apply the previously defined functions to the cleaned data, adding new col
 
 ```{r execute functions}
 
-# Add body_part and laterality columns to cleaned data
+# Add body_part, brain_side and laterality columns to cleaned data
 data_cleaned$body_part <- sapply(data_cleaned$notes, extract_body_parts)
-data_cleaned$laterality <- mapply(identify_laterality, data_cleaned$study_ID, data_cleaned$notes)
+result <- mapply(identify_laterality, data_cleaned$study_ID, data_cleaned$notes, SIMPLIFY = FALSE)
+data_cleaned$laterality <- sapply(result, `[[`, "laterality")
+data_cleaned$brain_side <- sapply(result, `[[`, "brain_side")
 data_cleaned$severity <- sapply(data_cleaned$notes, extract_severity)
 
 ```
