@@ -9,9 +9,9 @@ output:
 
 # Set-up
 
-We begin by setting global options for R Markdown chunks and then loads necessary libraries: `tidyverse` for data manipulation and visualization and `stringdist` for string distance calculations (not currently using).
+We begin by setting global options for R Markdown chunks and then loads necessary libraries.
 
-The dataset `data.csv`, downloaded directly from REDCap, is then loaded. The dataset is filtered to remove rows where Repeat Instrument is NA, which indicate an empty row.
+The datasets `data.csv` and `dbs_data.csv` are downloaded directly from REDCap and loaded. The datasets are filtered and undergo minor cleaning.
 
 ```{r setup, include=FALSE}
 
@@ -22,13 +22,13 @@ library(shiny)
 library(rsconnect)
 library(grid)
 
-# Load the data
+# Load paresthesias data
 data <- read_csv("data.csv") %>% 
   filter(!is.na(`Repeat Instrument`))
 
 ```
 
-Next, I rename several columns in the dataset for clarity and ease of use. The `settings` column is converted to lowercase to standardize the data. Certain columns `(Complete?`, `Repeat Instrument`, `Survey Identifier`) are removed from the dataset as they are not needed for this analysis.
+Next, I rename several columns in the dataset for clarity and ease of use. The `settings` column is converted to lowercase to standardize the data. Certain columns `(Complete?`, `Repeat Instrument`, `Survey Identifier`) are removed from the dataset as they are not needed. Device type (Boston or Abbott) is added.
 
 ```{r clean}
 
@@ -118,7 +118,7 @@ identify_laterality <- function(study_ID, notes) {
 ```{r extract severity}
 
 extract_severity <- function(notes) {
-  # Check if the notes column contains the pattern
+  # Check if the notes column contains a number 1 through 10 (written as either # or #/10)
   if (!is.na(notes) && grepl("\\b[0-9]/10\\b|10/10", notes)) {
     # Extract the number before "/10"
     matches <- regmatches(notes, regexpr("\\b[0-9]/10\\b|10/10", notes))
@@ -170,11 +170,11 @@ data_cleaned$severity <- sapply(data_cleaned$notes, extract_severity)
 The **`mA`** (amplitude) and **`severity`** columns are converted to numeric types, handling potential NA values.
 
 ```{r convert to correct data type}
-# Use as.numeric() and handle potential NA values
+# Use as.numeric() and handle NA values
 data_cleaned$mA <- as.numeric(as.character(data_cleaned$mA))
 data_cleaned$severity <- as.numeric(as.character(data_cleaned$severity))
 
-# Check for any NAs introduced by conversion
+# Check for NAs introduced by conversion
 sum(is.na(data_cleaned$mA))
 sum(is.na(data_cleaned$severity))
 
@@ -190,48 +190,48 @@ names(settings_table) <- c("Setting", "Frequency")
 
 settings_replacement <- c(
   "-8" = "8-",
-  "\\?" = NA,  # Escaped ?
+  "\\?" = NA, 
   "@a" = NA,
-  "1\\.0" = NA,  # Escaped .
-  "1- c\\+" = "1-/c+",  # Escaped +
+  "1\\.0" = NA,  
+  "1- c\\+" = "1-/c+", 
   "10abc " = "10abc-",
   "10b- 11b " = "10b-/11b+",
-  "10b- 11b\\+" = "10b-/11b+",  # Escaped +
+  "10b- 11b\\+" = "10b-/11b+",  
   "10c " = "10c-",
   "11b " = "11b-",
   "2c-c+" = "2c-/c+",
-  "2/3/4\\(-\\)" = "2/3/4-",  # Escaped ()-
+  "2/3/4\\(-\\)" = "2/3/4-", 
   "2a " = "2a-",
   "2a- 2c-" = "2a-/2c-",
   "2a- 3a-" = "2a-/3a-",
-  "2a- c\\+" = "2a-/c+",  # Escaped +
-  "2c- c\\+" = "2c-/c+",  # Escaped +
-  "2c-3c\\+" = "2c-/3c+",  # Escaped +
-  "c\\+ 10a-" = "c+/10a-",  # Escaped +
-  "c\\+ 11c-" = "c+/11c-",  # Escaped +
-  "c\\+ 12-" = "c+/12-",  # Escaped +
-  "c\\+ 9-" = "c+/9-",  # Escaped +
-  "2a-3c\\+" = "2a-/3c+",  # Escaped +
+  "2a- c\\+" = "2a-/c+",  
+  "2c- c\\+" = "2c-/c+",  
+  "2c-3c\\+" = "2c-/3c+",  
+  "c\\+ 10a-" = "c+/10a-",  
+  "c\\+ 11c-" = "c+/11c-",  
+  "c\\+ 12-" = "c+/12-",  
+  "c\\+ 9-" = "c+/9-",  
+  "2a-3c\\+" = "2a-/3c+",  
   "2b " = "2b-",
-  "2b- 3b\\+" = "2b-/3b+",  # Escaped +
-  "2b- c\\+" = "2b-/c+",  # Escaped +
-  "2c- 3c\\+" = "2c-/3c+",  # Escaped +
-  "3b- c\\+" = "3b-/c+ ",  # Escaped +
-  "3c- c\\+" = "3c-/c+",  # Escaped +
-  "4\\.0" = NA,  # Escaped .
-  "4\\.5" = NA,  # Escaped .
-  "4\\(-\\)/7\\(\\+\\)" = "4-/7+",  # Escaped ()+-
-  "4\\(\\+\\)/7\\(-\\)" = "4+/7-",  # Escaped ()+-
-  "4\\(\\+\\)7\\(-\\)" = "4+/7-",  # Escaped ()+-
-  "4/7\\(-\\) \\[80/20%\\]" = "4+/7-",  # Escaped ()- and []
-  "4\\+ 7-" = "4+/7-",  # Escaped +
-  "5\\(\\+\\)/7\\(-\\)" = "5+/7-",  # Escaped ()+-
-  "5\\+ 7-" = "5+/7-",  # Escaped +
-  "5/6/7\\(-\\)" = "5/6/7-",  # Escaped ()-
-  "c\\+ 10a " = "c+/10a-",  # Escaped +
-  "c\\+ 11c- " = "c+/11c-",  # Escaped +
-  "c\\+ 12- " = "c+/12-",  # Escaped +
-  "c\\+ 9- " = "c+/9-"  # Escaped +
+  "2b- 3b\\+" = "2b-/3b+",  
+  "2b- c\\+" = "2b-/c+",  
+  "2c- 3c\\+" = "2c-/3c+",  
+  "3b- c\\+" = "3b-/c+ ",  
+  "3c- c\\+" = "3c-/c+",  
+  "4\\.0" = NA, 
+  "4\\.5" = NA,  
+  "4\\(-\\)/7\\(\\+\\)" = "4-/7+",
+  "4\\(\\+\\)/7\\(-\\)" = "4+/7-",
+  "4\\(\\+\\)7\\(-\\)" = "4+/7-",
+  "4/7\\(-\\) \\[80/20%\\]" = "4+/7-",  
+  "4\\+ 7-" = "4+/7-",  
+  "5\\(\\+\\)/7\\(-\\)" = "5+/7-", 
+  "5\\+ 7-" = "5+/7-", 
+  "5/6/7\\(-\\)" = "5/6/7-",  
+  "c\\+ 10a " = "c+/10a-",  
+  "c\\+ 11c- " = "c+/11c-",  
+  "c\\+ 12- " = "c+/12-",  
+  "c\\+ 9- " = "c+/9-"
 )
 
 settings_cleaned <- data_cleaned %>%
@@ -247,7 +247,7 @@ Frequency counts mA values are also calculated and displayed. The extent of ampl
 
 ```{r}
 
-# Descriptive statistics for numerical variables
+# Descriptive stats for numerical variables
 settings_cleaned %>% 
   select(mA, severity, settings) %>% 
   summary()
