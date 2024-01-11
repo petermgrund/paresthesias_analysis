@@ -312,6 +312,86 @@ summary_face_UE_unipolar_data <- face_UE_unipolar_data %>%
 ```
 
 ```{r}
+monopolar_clean <- settings_cleaned %>%
+  filter(stimulation_type == "unipolar") %>%
+  mutate(combined_settings = case_when(
+    device == "AB" ~ case_when(
+      settings %in% c("1", "1-", "1-/c+", "9", "9-", "9a") ~ "1/9",
+      settings %in% c("2", "2-", "2-/c+", "2abc", "2abc-", "10", "10-", "10abc", "10abc-") ~ "2abc/10abc",
+      settings %in% c("2a", "2a-", "10a", "10a-") ~ "2a/10a",
+      settings %in% c("2b", "2b-", "10b", "10b-") ~ "2b/10b",
+      settings %in% c("2c", "2c-", "2c-/c+", "10c", "10c-") ~ "2c/10c",
+      settings %in% c("2a-/2b-", "2a/2b", "10ab") ~ "2ab/10ab",
+      settings %in% c("2a-/2c-", "2a/2c", "10ac") ~ "2ac/10ac",
+      settings %in% c("2a-/3a-", "2a/3a") ~ "2a3a/10a11a",
+      settings %in% c("2b-/3b-", "2b/3b") ~ "2b3b/10b11b",
+      settings %in% c("2c-/3c-", "2c/3c", "23c", "1011c") ~ "2c/3c",
+      settings %in% c("3", "3-", "3-/c+", "3abc", "3abc-", "11", "11abc") ~ "3abc/11abc",
+      settings %in% c("3a", "3a-", "11a", "11a-", "11a+") ~ "3a/11a",
+      settings %in% c("3b", "3b-", "11b", "11b-") ~ "3b/11b",
+      settings %in% c("3c", "3c-", "11c", "11c-") ~ "3c/11c",
+      settings %in% c("3a-/3c-", "3a/3c") ~ "3a/3c",
+      settings %in% c("4", "4-", "4-/c+", "12") ~ "4/12",
+      TRUE ~ NA_character_
+    ),
+    device == "BS" ~ case_when(
+      settings %in% c("1", "1-", "1-/c+") ~ "1/9",
+      settings %in% c("2/3/4", "2/3/4-", "2abc") ~ "2abc/10abc", 
+      settings %in% c("2", "2-", "2a") ~ "2a/10a",
+      settings %in% c("3", "3-", "2b") ~ "2b/10b",
+      settings %in% c("5/6/7","5/6/7-", "3abc") ~ "3abc/11abc", 
+      settings %in% c("4", "4-", "2c") ~ "2c/10c",
+      settings %in% c("5", "5-", "3a") ~ "3a/11a",
+      settings %in% c("6", "6-", "3b") ~ "3b/11b",
+      settings %in% c("7", "7-", "3c") ~ "3c/11c",
+      settings %in% c("8", "8-") ~ "4/12",
+      TRUE ~ NA_character_
+    ),
+    TRUE ~ NA_character_
+  )) #%>%
+  #select(-settings)
+
+na_settings <- monopolar_clean %>%
+  filter(is.na(combined_settings)) %>%
+  select(settings, device)
+
+print(na_settings)
+
+#complete_data <- expand.grid(study_ID = unique(monopolar_clean$study_ID),
+                                 #visit = unique(monopolar_clean$visit),
+                                 #combined_settings = unique(monopolar_clean$combined_settings))
+
+
+
+#plot_data <- left_join(complete_data, plot_data, by = c("study_ID", "visit", "settings"))
+
+
+  
+```
+
+
+```{r}
+generate_combinations <- function(contacts) {
+  all_combinations <- lapply(seq_along(contacts), function(n) {
+    combn(contacts, n, simplify = FALSE)
+  })
+  unlist(all_combinations, recursive = FALSE)
+}
+
+# Call the function with a list of strings
+contacts_ABleft <- c("1", "2a", "2b", "2c", "3a", "3b", "3c", "4")
+contacts_ABright <- c("9", "10a", "10b", "10c", "11a", "11b", "11c", "12")
+contacts_BS <- c("1", "2", "3", "4", "5", "6", "7", "8")
+
+all_combinations_ABleft <- generate_combinations(contacts_ABleft)
+all_combinations_Aright <- generate_combinations(contacts_ABright)
+all_combinations_BS <- generate_combinations(contacts_BS)
+
+
+```
+
+
+```{r}
 ui <- fluidPage(
   selectInput("subjectInput", "Choose a Subject:", choices = unique(data_cleaned$study_ID)),
   selectInput("visitInput", "Choose a Visit:", choices = unique(data_cleaned$visit)), # Choices set in server
