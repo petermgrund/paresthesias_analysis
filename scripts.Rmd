@@ -393,46 +393,77 @@ all_combinations_BS <- generate_combinations(contacts_BS)
 
 ```{r}
 ui <- fluidPage(
-  selectInput("subjectInput", "Choose a Subject:", choices = unique(data_cleaned$study_ID)),
-  selectInput("visitInput", "Choose a Visit:", choices = unique(data_cleaned$visit)), # Choices set in server
+  selectInput("subjectInput", "Choose a Subject:", choices = unique(monopolar_clean$study_ID)),
+  selectInput("visitInput", "Choose a Visit:", choices = unique(monopolar_clean$visit)), 
+  selectInput("colorInput", "Color by:", choices = c("Severity", "Body Part")),
   plotOutput("subjectPlot")
 )
 
 server <- function(input, output) {
   selected_data <- reactive({
-    data_cleaned %>%
+    monopolar_clean %>%
       filter(study_ID == input$subjectInput, visit == input$visitInput) %>%
-      arrange(as.numeric(order_type)) %>%
-      mutate(combined_settings = case_when(
-        settings %in% c("A", "B") ~ "A_B",
-        settings %in% c("C", "D") ~ "C_D",
-        TRUE ~ as.character(settings)
-      ))
+      arrange(as.numeric(order_type))
   })
 
   output$subjectPlot <- renderPlot({
     plot_data <- selected_data()
     
+    device_name <- unique(plot_data$device)
+    brain_side <- ifelse(stringr::str_detect(input$subjectInput, "L$"), "L", 
+                         ifelse(stringr::str_detect(input$subjectInput, "R$"), "R", ""))
+    #browser()
+    
     # Create a complete dataset with all combinations of subjects, visits, and settings
-    complete_data <- expand.grid(study_ID = unique(data_cleaned$study_ID),
-                                 visit = unique(data_cleaned$visit),
-                                 settings = unique(data_cleaned$settings))
+    complete_data <- expand.grid(study_ID = unique(monopolar_clean$study_ID),
+                                 visit = unique(monopolar_clean$visit),
+                                 combined_settings = unique(monopolar_clean$combined_settings),
+                                 device = unique(monopolar_clean$device))
+
+    # Define x-axis labels based on device and brain_side
+    #x_labels <- if (device_name == "AB" && brain_side == "L") {
+    #  c("1", "2a", "2b", "2c",)  # Replace with your actual labels
+   # } else if (device_name == "AB" && brain_side == "R") {
+   #   c("Label 4", "Label 5", "Label 6")  # Replace with your actual labels
+   # } else {
+  #    unique(plot_data$combined_settings)
+    #}
 
     # Left join the complete dataset with the selected data
-    plot_data <- left_join(complete_data, plot_data, by = c("study_ID", "visit", "settings"))
+    plot_data <- left_join(complete_data, plot_data, by = c("study_ID", "visit", "combined_settings", "device"))
 
-    ggplot(plot_data, aes(x = settings, y = mA, color = severity, shape = para_type)) +
-      geom_point(size = 4, stroke = 0) +
-      geom_text(aes(label = severity), size = 3, nudge_x = 0.2, nudge_y = 0.0, check_overlap = TRUE) +
-      scale_color_gradient(low = "#D2EBE2", high = "#061F16", limits = c(0, 10)) +
+    x_axis_order <- c("1/9", "2a/10a", "2ab/10ab", "2b/10b", "2ac/10ac", "2c/10c", "2abc/10abc", "2a3a/10a11a",
+                      "3a/11a", "3b/11b", "3c/11c", "3abc/11abc", "4/12", NA)
+    
+    color_column <- ifelse(input$colorInput == "Severity", "severity", "body_part")
+
+    
+ggplot(plot_data, aes(x = factor(combined_settings, levels = x_axis_order), y = mA, color = get(color_column), shape = para_type)) +
+  geom_point(size = 4, stroke = 0) +
+  geom_text(aes(label = severity), size = 3, nudge_x = 0.2, nudge_y = 0.0, check_overlap = TRUE) +
+  {
+    if (input$colorInput == "Severity") {
+      scale_color_gradient(low = "#D2EBE2", high = "#061F16", limits = c(0, 10))
+    } else {
+      scale_color_discrete()  # Use a discrete color scale for body parts
+    }
+  } +
       scale_y_continuous(limits = c(0, 5)) +  # Set y-axis limits
-      labs(title = paste("Paresthesia thresholds for subject", input$subjectInput, "during", input$visitInput),
-           x = "Settings (Ordered by type)",
-           y = "mA (amplitude)",
-           color = "Severity",
-           shape = "Paresthesia type") +
+      labs(title = paste("Paresthesia thresholds for subject", 
+                   input$subjectInput, 
+                   ifelse(stringr::str_detect(input$subjectInput, "L$"), "(left brain)", 
+                   ifelse(stringr::str_detect(input$subjectInput, "R$"), "(right brain)", "")), 
+                   "during", input$visitInput),
+           subtitle = paste("Device:", 
+                            ifelse(stringr::str_detect(device_name, "AB"), "Abbott",
+                            ifelse(stringr::str_detect(device_name, "BS"), "Boston Scientific", ""))),
+     x = "Settings (Ordered by type)",
+     y = "mA (amplitude)",
+     color = color_column,
+     shape = "Paresthesia type") +
       annotate("text", x = Inf, y = Inf, label = "Note: Gray points without values indicate missing severity data", hjust = 1.1, vjust = 1.1, size = 3) +
       theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
       scale_shape_manual(values = c("Transient" = 16, "Persistent" = 17))  
   })
 }
